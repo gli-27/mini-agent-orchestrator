@@ -282,6 +282,102 @@ maintaining the standard request-response pattern for intermediate nodes.
 
 ---
 
+## Persistence Layer
+
+### Abstract Store Pattern
+
+```
+┌─────────────────────────────┐
+│     Business Logic          │
+│  (ExecutionManager, API)    │
+└──────────────┬──────────────┘
+               │ depends on interface
+               ▼
+┌─────────────────────────────┐
+│     Abstract Base           │
+│  AgentRegistry              │
+│  WorkflowStore              │
+└──────────┬──────────────────┘
+           │ implementations
+     ┌─────┴─────┐
+     ▼           ▼
+┌──────────┐ ┌──────────────┐
+│ InMemory │ │  DynamoDB    │
+│ (dev)    │ │  (prod)      │
+└──────────┘ └──────────────┘
+```
+
+The business logic (ExecutionManager, API routers) depends only on abstract
+interfaces. Implementations are selected at startup via factory functions
+based on configuration.
+
+### DynamoDB Table Design
+
+| Table | PK | Attributes |
+|-------|-----|------------|
+| `orchestrator-agents` | `agent_id` | name, endpoint, status, capabilities, heartbeat |
+| `orchestrator-workflows` | `workflow_id` | name, nodes (JSON), edges (JSON), created_at |
+
+**Serialization strategy:**
+- Pydantic `model_dump()` → DynamoDB item
+- `datetime` fields → ISO 8601 strings
+- Enum fields → `.value` string
+- Complex nested fields (nodes, edges) → JSON via `model_dump(mode="json")`
+
+**Consistency guarantees:**
+- `ConditionExpression="attribute_not_exists(pk)"` on creates → no silent overwrites
+- Read-modify-write for updates (get → copy → put)
+
+### Factory Pattern (config-driven)
+
+Controlled by environment variables:
+- `ORCHESTRATOR_REGISTRY_BACKEND` → `"memory"` | `"dynamodb"`
+- `ORCHESTRATOR_WORKFLOW_BACKEND` → `"memory"` | `"dynamodb"`
+- `ORCHESTRATOR_DYNAMODB_TABLE_AGENTS` → table name (default: `orchestrator-agents`)
+- `ORCHESTRATOR_DYNAMODB_TABLE_WORKFLOWS` → table name (default: `orchestrator-workflows`)
+- `ORCHESTRATOR_DYNAMODB_REGION` → AWS region (default: `us-west-2`)
+
+```python
+# main.py — factory functions
+def create_registry(settings: Settings) -> AgentRegistry:
+    if settings.registry_backend == "dynamodb":
+        return DynamoDBAgentRegistry(settings.dynamodb_table_agents, settings.dynamodb_region)
+    return InMemoryAgentRegistry()
+```
+
+---
+
+## Observability
+
+### Prometheus Metrics (`GET /metrics`)
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `orchestrator_executions_total` | Counter | workflow_id |
+| `orchestrator_execution_status_total` | Counter | status |
+| `orchestrator_execution_duration_seconds` | Histogram | workflow_id |
+| `orchestrator_node_executions_total` | Counter | agent_id, status |
+| `orchestrator_node_duration_seconds` | Histogram | agent_id |
+| `orchestrator_agent_invocations_total` | Counter | agent_id |
+| `orchestrator_agent_invocation_errors_total` | Counter | agent_id, error_type |
+| `orchestrator_http_requests_total` | Counter | method, path, status_code |
+| `orchestrator_http_request_duration_seconds` | Histogram | method, path |
+
+**Production setup:**
+- Scraped by CloudWatch Agent or Prometheus server
+- Dashboards: execution throughput, p50/p99 latency, error rates
+- Alarms: error rate > 5%, p99 latency > 30s, DLQ depth > 0
+
+### Histogram Buckets
+
+```
+Execution duration: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300] seconds
+Node duration:      [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30] seconds
+HTTP request:       [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5] seconds
+```
+
+---
+
 ## Internal vs External Communication
 
 | Path | Protocol | Why |
