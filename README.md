@@ -4,16 +4,16 @@
 
 ```
                     ┌─────────┐
-                    │  Client  │
+                    │  Client │
                     └────┬────┘
                          │ REST + WebSocket + SSE
                          ▼
               ┌─────────────────────┐
               │    Orchestrator     │
-              │  ┌───────┐ ┌─────┐ │
-              │  │  DAG  │ │ WS  │ │
-              │  │ Engine│ │Push │ │       ┌──────────────┐
-              │  └───┬───┘ └─────┘ │       │  Prometheus  │
+              │  ┌───────┐ ┌─────┐  │
+              │  │  DAG  │ │ WS  │  │
+              │  │ Engine│ │Push │  │      ┌──────────────┐
+              │  └───┬───┘ └─────┘  │      │  Prometheus  │
               │      │    Execution │◀────▶│  /metrics    │
               │      ▼    Manager   │      └──────────────┘
               │  ┌───────────────┐  │
@@ -24,8 +24,8 @@
               └─────────┬───────────┘             │
                         │                         ▼
               ┌─────────▼───────────┐   ┌─────────────────┐
-              │  DynamoDB / Memory  │   │ mini-llm-serving │
-              │  (pluggable store)  │   │ (LLM inference)  │
+              │  DynamoDB / Memory  │   │ mini-llm-serving│
+              │  (pluggable store)  │   │ (LLM inference) │
               └─────────────────────┘   └─────────────────┘
 ```
 
