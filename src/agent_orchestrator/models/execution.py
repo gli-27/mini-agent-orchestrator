@@ -16,6 +16,7 @@ class RunStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIALLY_FAILED = "partially_failed"
+    TIMED_OUT = "timed_out"
 
 
 class NodeResult(BaseModel):

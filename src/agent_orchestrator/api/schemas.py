@@ -56,6 +56,12 @@ class StartExecutionRequest(BaseModel):
 
     workflow_id: str = Field(..., description="ID of workflow to execute")
     input_data: dict = Field(default_factory=dict, description="Input data for the workflow")
+    timeout: float | None = Field(
+        default=None,
+        ge=1.0,
+        le=3600.0,
+        description="Execution timeout in seconds (default from config if not set)",
+    )
 
 
 class ErrorResponse(BaseModel):

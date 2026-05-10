@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     max_concurrency: int = 10
     default_agent_timeout: float = 30.0
     default_max_retries: int = 3
+    default_execution_timeout: float = 300.0  # 5 minutes
 
     # Server
     host: str = "0.0.0.0"

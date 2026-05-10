@@ -39,6 +39,7 @@ class ExecutionManager:
         dag_engine: DAGEngine | None = None,
         max_concurrency: int = 10,
         client: httpx.AsyncClient | None = None,
+        default_timeout: float = 300.0,
     ) -> None:
         self._registry = registry
         self._dag_engine = dag_engine or DAGEngine()
@@ -46,6 +47,7 @@ class ExecutionManager:
         self._data_resolver = DataResolver()
         self._node_runner = NodeRunner(client=client)
         self._runs: dict[str, ExecutionRun] = {}
+        self._default_timeout = default_timeout
 
     @property
     def runs(self) -> dict[str, ExecutionRun]:
@@ -56,16 +58,20 @@ class ExecutionManager:
         self,
         workflow: Workflow,
         input_data: dict | None = None,
+        timeout: float | None = None,
     ) -> ExecutionRun:
         """Start a new execution run for a workflow.
 
         Args:
             workflow: The workflow to execute.
             input_data: Input data for the workflow.
+            timeout: Execution timeout in seconds. Uses default_timeout if None.
 
         Returns:
             The completed ExecutionRun with all node results.
         """
+        execution_timeout = timeout if timeout is not None else self._default_timeout
+
         run = ExecutionRun(
             run_id=str(uuid.uuid4()),
             workflow_id=workflow.workflow_id,
@@ -79,39 +85,29 @@ class ExecutionManager:
             "execution_started",
             run_id=run.run_id,
             workflow_id=workflow.workflow_id,
+            timeout=execution_timeout,
         )
 
         try:
-            levels = self._dag_engine.compute_levels(workflow)
-
-            for level_idx, level_nodes in enumerate(levels):
-                logger.info(
-                    "executing_level",
-                    run_id=run.run_id,
-                    level=level_idx,
-                    nodes=level_nodes,
-                )
-
-                results = await self._execute_level(
-                    workflow=workflow,
-                    node_ids=level_nodes,
-                    run=run,
-                )
-
-                # Store results
-                for result in results:
-                    run.node_results[result.node_id] = result
-
-                # Check if we should stop (all nodes in level failed)
-                level_statuses = {r.status for r in results}
-                if level_statuses == {RunStatus.FAILED}:
-                    logger.warning(
-                        "level_all_failed_stopping",
-                        run_id=run.run_id,
-                        level=level_idx,
-                    )
-                    break
-
+            await asyncio.wait_for(
+                self._run_levels(workflow, run),
+                timeout=execution_timeout,
+            )
+        except TimeoutError:
+            logger.error(
+                "execution_timeout",
+                run_id=run.run_id,
+                timeout=execution_timeout,
+            )
+            run = run.model_copy(
+                update={
+                    "status": RunStatus.TIMED_OUT,
+                    "completed_at": datetime.now(UTC),
+                    "output": self._aggregate_output(run),
+                }
+            )
+            self._runs[run.run_id] = run
+            return run
         except Exception as exc:
             logger.error(
                 "execution_error",
@@ -145,6 +141,38 @@ class ExecutionManager:
         )
 
         return run
+
+    async def _run_levels(self, workflow: Workflow, run: ExecutionRun) -> None:
+        """Execute all DAG levels sequentially, stopping if an entire level fails."""
+        levels = self._dag_engine.compute_levels(workflow)
+
+        for level_idx, level_nodes in enumerate(levels):
+            logger.info(
+                "executing_level",
+                run_id=run.run_id,
+                level=level_idx,
+                nodes=level_nodes,
+            )
+
+            results = await self._execute_level(
+                workflow=workflow,
+                node_ids=level_nodes,
+                run=run,
+            )
+
+            # Store results
+            for result in results:
+                run.node_results[result.node_id] = result
+
+            # Check if we should stop (all nodes in level failed)
+            level_statuses = {r.status for r in results}
+            if level_statuses == {RunStatus.FAILED}:
+                logger.warning(
+                    "level_all_failed_stopping",
+                    run_id=run.run_id,
+                    level=level_idx,
+                )
+                break
 
     async def get_run(self, run_id: str) -> ExecutionRun | None:
         """Get an execution run by ID."""

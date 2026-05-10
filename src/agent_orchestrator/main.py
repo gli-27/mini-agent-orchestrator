@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     manager = ExecutionManager(
         registry=registry,
         max_concurrency=settings.max_concurrency,
+        default_timeout=settings.default_execution_timeout,
     )
 
     # Wire up routers with dependencies

@@ -45,7 +45,11 @@ async def start_execution(request: StartExecutionRequest) -> ExecutionRun:
             detail=f"Workflow '{request.workflow_id}' not found",
         )
 
-    run = await manager.start_run(workflow=workflow, input_data=request.input_data)
+    run = await manager.start_run(
+        workflow=workflow,
+        input_data=request.input_data,
+        timeout=request.timeout,
+    )
     return run
 
 
