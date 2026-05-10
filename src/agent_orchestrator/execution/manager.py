@@ -48,6 +48,7 @@ class ExecutionManager:
         self._node_runner = NodeRunner(client=client)
         self._runs: dict[str, ExecutionRun] = {}
         self._default_timeout = default_timeout
+        self._cancel_events: dict[str, asyncio.Event] = {}
 
     @property
     def runs(self) -> dict[str, ExecutionRun]:
@@ -80,6 +81,7 @@ class ExecutionManager:
             started_at=datetime.now(UTC),
         )
         self._runs[run.run_id] = run
+        self._cancel_events[run.run_id] = asyncio.Event()
 
         logger.info(
             "execution_started",
@@ -142,11 +144,68 @@ class ExecutionManager:
 
         return run
 
+    async def cancel_run(self, run_id: str) -> ExecutionRun | None:
+        """Cancel a running execution.
+
+        Sets the cancel event so no new levels are dispatched.
+        Running nodes complete their current attempt.
+
+        Returns:
+            The updated ExecutionRun if found and cancellable, None otherwise.
+        """
+        event = self._cancel_events.get(run_id)
+        if event is None:
+            return None
+
+        run = self._runs.get(run_id)
+        if run is None:
+            return None
+
+        # Only cancel if still running
+        if run.status != RunStatus.RUNNING:
+            return run
+
+        event.set()
+        logger.info("execution_cancel_requested", run_id=run_id)
+
+        # Give a brief moment for the level loop to detect cancellation
+        await asyncio.sleep(0)
+
+        # Update status if not yet updated by the level loop
+        run = self._runs[run_id]
+        if run.status == RunStatus.RUNNING:
+            run = run.model_copy(
+                update={
+                    "status": RunStatus.CANCELLED,
+                    "completed_at": datetime.now(UTC),
+                    "output": self._aggregate_output(run),
+                }
+            )
+            self._runs[run_id] = run
+
+        return run
+
     async def _run_levels(self, workflow: Workflow, run: ExecutionRun) -> None:
-        """Execute all DAG levels sequentially, stopping if an entire level fails."""
+        """Execute all DAG levels sequentially, checking for cancellation."""
         levels = self._dag_engine.compute_levels(workflow)
+        cancel_event = self._cancel_events.get(run.run_id)
 
         for level_idx, level_nodes in enumerate(levels):
+            # Check for cancellation before each level
+            if cancel_event and cancel_event.is_set():
+                logger.info(
+                    "execution_cancelled",
+                    run_id=run.run_id,
+                    level=level_idx,
+                )
+                run.model_copy(
+                    update={
+                        "status": RunStatus.CANCELLED,
+                        "completed_at": datetime.now(UTC),
+                    }
+                )
+                return
+
             logger.info(
                 "executing_level",
                 run_id=run.run_id,

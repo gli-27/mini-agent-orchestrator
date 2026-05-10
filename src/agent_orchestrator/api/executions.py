@@ -36,9 +36,9 @@ async def start_execution(request: StartExecutionRequest) -> ExecutionRun:
     can be made async with SQS/task queue later).
     """
     manager = _get_manager()
-    workflows = get_workflow_store()
+    store = get_workflow_store()
 
-    workflow = workflows.get(request.workflow_id)
+    workflow = await store.get(request.workflow_id)
     if workflow is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,3 +71,20 @@ async def list_executions() -> list[ExecutionRun]:
     """List all execution runs."""
     manager = _get_manager()
     return list(manager.runs.values())
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_execution(run_id: str) -> ExecutionRun:
+    """Cancel a running execution.
+
+    Running nodes complete their current attempt but no new levels are dispatched.
+    """
+    manager = _get_manager()
+
+    cancelled = await manager.cancel_run(run_id)
+    if cancelled is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution run '{run_id}' not found or not cancellable",
+        )
+    return cancelled

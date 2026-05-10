@@ -7,23 +7,40 @@ from fastapi import APIRouter, HTTPException, status
 from agent_orchestrator.api.schemas import CreateWorkflowRequest
 from agent_orchestrator.dag import DAGEngine, DAGValidationError
 from agent_orchestrator.models.workflow import NodeDefinition, Workflow
+from agent_orchestrator.storage.base import WorkflowStore
 
 router = APIRouter(prefix="/v1/workflows", tags=["workflows"])
 
-# In-memory workflow store (DynamoDB-ready interface pattern)
-_workflows: dict[str, Workflow] = {}
 _dag_engine = DAGEngine()
+_store: WorkflowStore | None = None
 
 
-def get_workflow_store() -> dict[str, Workflow]:
-    """Access the workflow store (for testing/dependency injection)."""
-    return _workflows
+def init_router(store: WorkflowStore) -> None:
+    """Initialize the router with the workflow store."""
+    global _store  # noqa: PLW0603
+    _store = store
+
+
+def _get_store() -> WorkflowStore:
+    """Get the workflow store or raise if not initialized."""
+    if _store is None:
+        raise RuntimeError("Workflow store not initialized")
+    return _store
+
+
+def get_workflow_store() -> WorkflowStore:
+    """Public accessor for the workflow store (used by executions router)."""
+    return _get_store()
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_workflow(request: CreateWorkflowRequest) -> Workflow:
     """Create a new workflow. Validates DAG structure on creation."""
-    if request.workflow_id in _workflows:
+    store = _get_store()
+
+    # Check if already exists
+    existing = await store.get(request.workflow_id)
+    if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Workflow '{request.workflow_id}' already exists",
@@ -58,20 +75,22 @@ async def create_workflow(request: CreateWorkflowRequest) -> Workflow:
             detail=f"Invalid DAG: {exc}",
         ) from exc
 
-    _workflows[workflow.workflow_id] = workflow
+    await store.save(workflow)
     return workflow
 
 
 @router.get("")
 async def list_workflows() -> list[Workflow]:
     """List all workflows."""
-    return list(_workflows.values())
+    store = _get_store()
+    return await store.list_workflows()
 
 
 @router.get("/{workflow_id}")
 async def get_workflow(workflow_id: str) -> Workflow:
     """Get workflow by ID."""
-    workflow = _workflows.get(workflow_id)
+    store = _get_store()
+    workflow = await store.get(workflow_id)
     if workflow is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -83,9 +102,11 @@ async def get_workflow(workflow_id: str) -> Workflow:
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workflow(workflow_id: str) -> None:
     """Delete a workflow."""
-    if workflow_id not in _workflows:
+    store = _get_store()
+    try:
+        await store.delete(workflow_id)
+    except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{workflow_id}' not found",
-        )
-    del _workflows[workflow_id]
+        ) from exc

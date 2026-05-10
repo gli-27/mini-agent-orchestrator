@@ -11,11 +11,38 @@ from fastapi import FastAPI
 from agent_orchestrator.api import agents as agents_router
 from agent_orchestrator.api import executions as executions_router
 from agent_orchestrator.api import workflows as workflows_router
-from agent_orchestrator.config import get_settings
+from agent_orchestrator.config import Settings, get_settings
 from agent_orchestrator.execution.manager import ExecutionManager
+from agent_orchestrator.registry.base import AgentRegistry
 from agent_orchestrator.registry.memory import InMemoryAgentRegistry
+from agent_orchestrator.storage.base import WorkflowStore
+from agent_orchestrator.storage.memory import InMemoryWorkflowStore
 
 logger = structlog.get_logger(__name__)
+
+
+def create_registry(settings: Settings) -> AgentRegistry:
+    """Factory: create the appropriate agent registry based on config."""
+    if settings.registry_backend == "dynamodb":
+        from agent_orchestrator.registry.dynamodb import DynamoDBAgentRegistry
+
+        return DynamoDBAgentRegistry(
+            table_name=settings.dynamodb_table_agents,
+            region=settings.dynamodb_region,
+        )
+    return InMemoryAgentRegistry()
+
+
+def create_workflow_store(settings: Settings) -> WorkflowStore:
+    """Factory: create the appropriate workflow store based on config."""
+    if settings.workflow_backend == "dynamodb":
+        from agent_orchestrator.storage.dynamodb import DynamoDBWorkflowStore
+
+        return DynamoDBWorkflowStore(
+            table_name=settings.dynamodb_table_workflows,
+            region=settings.dynamodb_region,
+        )
+    return InMemoryWorkflowStore()
 
 
 @asynccontextmanager
@@ -23,8 +50,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan — initialize and tear down resources."""
     settings = get_settings()
 
-    # Initialize registry and execution manager
-    registry = InMemoryAgentRegistry()
+    # Initialize registry, workflow store, and execution manager
+    registry = create_registry(settings)
+    workflow_store = create_workflow_store(settings)
     manager = ExecutionManager(
         registry=registry,
         max_concurrency=settings.max_concurrency,
@@ -33,16 +61,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Wire up routers with dependencies
     agents_router.init_router(registry)
+    workflows_router.init_router(workflow_store)
     executions_router.init_router(manager)
 
     # Store on app state for test access
     app.state.registry = registry
+    app.state.workflow_store = workflow_store
     app.state.manager = manager
 
     logger.info(
         "application_started",
         app_name=settings.app_name,
         max_concurrency=settings.max_concurrency,
+        registry_backend=settings.registry_backend,
+        workflow_backend=settings.workflow_backend,
     )
 
     yield
