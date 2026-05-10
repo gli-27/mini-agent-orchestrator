@@ -11,6 +11,8 @@ from fastapi import FastAPI
 from agent_orchestrator.api import agents as agents_router
 from agent_orchestrator.api import executions as executions_router
 from agent_orchestrator.api import workflows as workflows_router
+from agent_orchestrator.api import ws as ws_router
+from agent_orchestrator.api.metrics_router import router as metrics_router
 from agent_orchestrator.config import Settings, get_settings
 from agent_orchestrator.execution.manager import ExecutionManager
 from agent_orchestrator.registry.base import AgentRegistry
@@ -63,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agents_router.init_router(registry)
     workflows_router.init_router(workflow_store)
     executions_router.init_router(manager)
+    ws_router.init_router(manager)
 
     # Store on app state for test access
     app.state.registry = registry
@@ -98,6 +101,8 @@ def create_app() -> FastAPI:
     app.include_router(agents_router.router)
     app.include_router(workflows_router.router)
     app.include_router(executions_router.router)
+    app.include_router(ws_router.router)
+    app.include_router(metrics_router)
 
     # Health check
     @app.get("/health", tags=["health"])
