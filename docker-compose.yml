@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Local development environment
+#
+# Services:
+#   api          — Agent Orchestrator (port 8001)
+#   localstack   — DynamoDB Local for persistence testing (port 4566)
+#
+# Usage:
+#   docker compose up -d
+#   curl http://localhost:8001/health
+#   curl http://localhost:8001/ready
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8000"
+    environment:
+      ORCHESTRATOR_HOST: "0.0.0.0"
+      ORCHESTRATOR_PORT: "8000"
+      ORCHESTRATOR_REGISTRY_BACKEND: "memory"
+      ORCHESTRATOR_WORKFLOW_BACKEND: "memory"
+      ORCHESTRATOR_MAX_CONCURRENCY: "10"
+      ORCHESTRATOR_DEFAULT_EXECUTION_TIMEOUT: "300"
+      ORCHESTRATOR_LOG_LEVEL: "INFO"
+      ORCHESTRATOR_DEBUG: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # LocalStack for DynamoDB local testing
+  # Switch ORCHESTRATOR_REGISTRY_BACKEND=dynamodb to test persistence
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: "dynamodb"
+      DEFAULT_REGION: "us-west-2"
+    volumes:
+      - localstack_data:/var/lib/localstack
+
+volumes:
+  localstack_data:

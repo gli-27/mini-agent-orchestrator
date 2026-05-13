@@ -104,10 +104,32 @@ def create_app() -> FastAPI:
     app.include_router(ws_router.router)
     app.include_router(metrics_router)
 
-    # Health check
+    # Liveness probe — is the process alive?
+    # Interview: "Liveness tells the orchestrator 'I'm not deadlocked'.
+    # If this fails, ECS/K8s should restart the container."
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
         return {"status": "healthy", "service": settings.app_name}
+
+    # Readiness probe — can the service accept traffic?
+    # Interview: "Readiness tells the load balancer 'I'm ready for requests'.
+    # During startup (registry init, DynamoDB connection), this returns 503
+    # so ALB doesn't route traffic to a half-initialized instance."
+    @app.get("/ready", tags=["health"])
+    async def ready() -> dict[str, str | bool]:
+        is_ready = (
+            hasattr(app.state, "registry")
+            and hasattr(app.state, "workflow_store")
+            and hasattr(app.state, "manager")
+        )
+        if not is_ready:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(  # type: ignore[return-value]
+                status_code=503,
+                content={"ready": False, "service": settings.app_name},
+            )
+        return {"ready": True, "service": settings.app_name}
 
     return app
 

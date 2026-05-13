@@ -48,19 +48,28 @@
 
 ## Quick Start
 
+### Docker Compose (recommended)
+
 ```bash
-# Clone
 git clone https://github.com/gli-27/mini-agent-orchestrator.git
 cd mini-agent-orchestrator
 
-# Install
-pip install -e ".[dev]"
+# Start API + LocalStack (DynamoDB)
+docker compose up -d
 
-# Run
-uvicorn agent_orchestrator.main:app --reload
+# Verify
+curl http://localhost:8001/health
+curl http://localhost:8001/ready
 ```
 
-Server starts at `http://localhost:8000`. API docs at `http://localhost:8000/docs`.
+API available at `http://localhost:8001`. Swagger docs at `http://localhost:8001/docs`.
+
+### Local Development
+
+```bash
+pip install -e ".[dev]"
+uvicorn agent_orchestrator.main:app --reload --port 8001
+```
 
 ---
 
